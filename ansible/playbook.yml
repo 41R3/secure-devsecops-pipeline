@@ -1,0 +1,37 @@
+---
+- name: Aplicar hardening CIS
+  hosts: localhost
+  tasks:
+    - name: 1.1.1.1 - Deshabilitar filesystems no seguros
+      ansible.builtin.command: 
+        cmd: "modprobe -n -v {{ item }} | grep -E '(cramfs|squashfs|udf)'"
+      loop:
+        - cramfs
+        - squashfs
+        - udf
+      changed_when: false
+      register: fs_modules
+
+    - name: 1.1.1.2 - Bloquear filesystems no seguros
+      ansible.builtin.sysctl:
+        name: "kernel.module.disabled"
+        value: "1"
+        sysctl_set: yes
+      when: fs_modules.results | map(attribute='stdout') | list | length > 0
+
+    - name: 3.1.1 - Deshabilitar servicios inseguros
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - nfs
+        - rpcbind
+
+    - name: Generar reporte de hardening
+      ansible.builtin.copy:
+        content: |
+          CIS Hardening Report
+          ====================
+          {{ fs_modules.results | to_nice_json }}
+        dest: ./hardening-report.txt

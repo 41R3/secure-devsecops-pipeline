@@ -1,0 +1,51 @@
+name: DevSecOps Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Iniciar app Flask
+        run: |
+          cd app
+          pip install -r requirements.txt
+          nohup python app.py > /dev/null 2>&1 &
+          sleep 10  # Esperar inicio
+
+      - name: Escanear con OWASP ZAP
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: 'http://localhost:5000'
+          fail_action: true
+          severity: high  # Bloquear en críticas/altas
+
+      - name: Guardar reporte ZAP
+        run: |
+          mkdir -p zap
+          cp zap-report.html zap/
+
+  server-hardening:
+    runs-on: ubuntu-latest
+    needs: security-scan  # Depende del escaneo
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar Ansible
+        run: sudo apt-get update && sudo apt-get install -y ansible
+
+      - name: Ejecutar hardening CIS
+        run: |
+          cd ansible
+          ansible-playbook playbook.yml
+          cat hardening-report.txt
+
+      - name: Subir reporte de hardening
+        uses: actions/upload-artifact@v3
+        with:
+          name: hardening-report
+          path: ansible/hardening-report.txt
