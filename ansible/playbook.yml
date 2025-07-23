@@ -2,6 +2,19 @@
 - name: Aplicar hardening CIS
   hosts: localhost
   become: yes
+  vars:
+    insecure_services:
+      - nfs
+      - nfs-server
+      - rpcbind
+      - avahi-daemon
+      - cups
+      - isc-dhcp-server
+    insecure_filesystems:
+      - cramfs
+      - squashfs
+      - udf
+
   tasks:
     - name: 1.1.1.1 - Verificar filesystems no seguros
       ansible.builtin.shell: |
@@ -12,60 +25,42 @@
           echo "{{ item }} no está cargado"
           exit 0
         fi
-      loop:
-        - cramfs
-        - squashfs
-        - udf
+      loop: "{{ insecure_filesystems }}"
       register: fs_check
       changed_when: false
-      ignore_errors: true
+      ignore_errors: yes
 
-    - name: 1.1.1.2 - Bloquear filesystems no seguros
-      ansible.builtin.shell: |
-        echo "install {{ item }} /bin/true" >> /etc/modprobe.d/{{ item }}.conf
-        echo "blacklist {{ item }}" >> /etc/modprobe.d/{{ item }}.conf
-      loop:
-        - cramfs
-        - squashfs
-        - udf
-      when: fs_check.results | selectattr('rc', 'equalto', 1) | list | length > 0
+    - name: 1.1.1.2 - Bloquear filesystems no seguros (solo si están cargados)
+      ansible.builtin.blockinfile:
+        path: /etc/modprobe.d/disable-insecure.conf
+        block: |
+          install {{ item.item }} /bin/true
+          blacklist {{ item.item }}
+      loop: "{{ fs_check.results }}"
+      when: item.rc == 1
+      notify: Reiniciar sistema
 
-    - name: 3.1.1 - Deshabilitar servicios inseguros
+    - name: 3.1.1 - Deshabilitar servicios inseguros (solo si existen)
       ansible.builtin.service:
         name: "{{ item }}"
         state: stopped
         enabled: no
-      loop:
-        - nfs
-        - nfs-server
-        - rpcbind
+      loop: "{{ insecure_services }}"
+      ignore_errors: yes
+      register: service_results
 
-    - name: 5.2.1 - Configurar permisos en SSH
+    - name: Mostrar resultados de servicios
+      ansible.builtin.debug:
+        msg: "Servicio {{ item.item }}: {{ 'Deshabilitado' if not item.failed else 'No encontrado' }}"
+      loop: "{{ service_results.results }}"
+
+    - name: 5.2.1 - Configurar permisos SSH (solo si existe)
       ansible.builtin.file:
         path: /etc/ssh/sshd_config
         owner: root
         group: root
         mode: '0600'
-      when: ansible_facts.pkg_mgr == 'apt'
-
-    - name: 2.1.1 - Deshabilitar servicios de red innecesarios
-      ansible.builtin.service:
-        name: "{{ item }}"
-        state: stopped
-        enabled: no
-      loop:
-        - avahi-daemon
-        - cups
-        - isc-dhcp-server
-      ignore_errors: true
-
-    - name: 1.5.1 - Configurar permisos en /boot/grub/grub.cfg
-      ansible.builtin.file:
-        path: /boot/grub/grub.cfg
-        owner: root
-        group: root
-        mode: '0600'
-      when: ansible_facts.pkg_mgr == 'apt'
+      when: ansible_facts.files['/etc/ssh/sshd_config'] is defined
 
     - name: Generar reporte de hardening
       ansible.builtin.copy:
@@ -74,13 +69,22 @@
           ====================
           Fecha: {{ ansible_date_time.iso8601 }}
           
-          Resultados:
-          - Filesystems no seguros verificados: 
-            {% for result in fs_check.results %}
-            {{ result.item }}: {{ "Bloqueado" if result.rc == 1 else "OK" }}
-            {% endfor %}
-          - Servicios inseguros detenidos: nfs, nfs-server, rpcbind
-          - Permisos SSH configurados: {{ 'Sí' if ansible_facts.pkg_mgr == 'apt' else 'No aplica' }}
-          - Servicios de red innecesarios deshabilitados: avahi-daemon, cups, isc-dhcp-server
-          - Permisos de GRUB configurados: {{ 'Sí' if ansible_facts.pkg_mgr == 'apt' else 'No aplica' }}
+          Filesystems bloqueados:
+          {% for result in fs_check.results %}
+            - {{ result.item }}: {{ "BLOQUEADO" if result.rc == 1 else "OK" }}
+          {% endfor %}
+
+          Servicios deshabilitados:
+          {% for result in service_results.results %}
+            - {{ result.item }}: {{ "DESHABILITADO" if not result.failed else "NO ENCONTRADO" }}
+          {% endfor %}
+
+          Otros controles:
+          - Permisos SSH: {{ 'CONFIGURADO' if ansible_facts.files['/etc/ssh/sshd_config'] is defined else 'NO APLICA' }}
         dest: ./hardening-report.txt
+
+  handlers:
+    - name: Reiniciar sistema
+      ansible.builtin.command: shutdown -r now
+      ignore_errors: yes
+      when: false  # Deshabilitado por seguridad, habilitar solo en entornos controlados

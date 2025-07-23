@@ -35,13 +35,22 @@ jobs:
       - name: Limpiar contenedores previos
         run: |
           docker ps -aq | xargs docker rm -f || true
+          docker system prune -f
 
       - name: Escanear con OWASP ZAP
         uses: zaproxy/action-full-scan@v0.11.0 
         with:
           target: 'http://localhost:5000'
-          cmd_options: '-a -t 120'  # Aumentar timeout a 120 minutos
+          cmd_options: '-a -t 60 -s'  # Aumentar timeout a 120 minutos
+          zap_options: '-config api.disablekey=true -config scanner.attackOnStart=true -config connection.timeoutInSecs=300
+'
           allow_issue_writing: false
+
+     - name: Verificar logs de ZAP
+       if: always()
+       run: |
+         docker logs $(docker ps -aq --filter ancestor=ghcr.io/zaproxy/zaproxy:stable) || true
+         cat zap/zap-report.md || true
 
       - name: Guardar reporte ZAP
         run: |

@@ -61,11 +61,13 @@ def health_check():
     }), 200
 
 if __name__ == "__main__":
-    # Configuración de puerto desde variable de entorno
-    port = int(os.environ.get("PORT", 5000))
+    # Configuración optimizada para escaneos
     app.run(
         host='0.0.0.0',
-        port=port,
+        port=5000,
         debug=False,
-        threaded=True  # Habilitar modo multi-hilo
+        threaded=True,
+        # Ajustes para evitar timeouts
+        use_reloader=False,
+        use_debugger=False
     )
