@@ -3,22 +3,32 @@
   hosts: localhost
   become: yes
   tasks:
-    - name: 1.1.1.1 - Deshabilitar filesystems no seguros
-      ansible.builtin.command:
-        cmd: "modprobe -n -v {{ item }} | grep -E '(cramfs|squashfs|udf)'"
+    - name: 1.1.1.1 - Verificar filesystems no seguros
+      ansible.builtin.shell: |
+        if lsmod | grep -q "{{ item }}"; then
+          echo "{{ item }} está cargado"
+          exit 1
+        else
+          echo "{{ item }} no está cargado"
+          exit 0
+        fi
       loop:
         - cramfs
         - squashfs
         - udf
+      register: fs_check
       changed_when: false
-      register: fs_modules
+      ignore_errors: true
 
     - name: 1.1.1.2 - Bloquear filesystems no seguros
-      ansible.builtin.sysctl:
-        name: "kernel.module.disabled"
-        value: "1"
-        sysctl_set: yes
-      when: fs_modules.results | map(attribute='stdout') | list | length > 0
+      ansible.builtin.shell: |
+        echo "install {{ item }} /bin/true" >> /etc/modprobe.d/{{ item }}.conf
+        echo "blacklist {{ item }}" >> /etc/modprobe.d/{{ item }}.conf
+      loop:
+        - cramfs
+        - squashfs
+        - udf
+      when: fs_check.results | selectattr('rc', 'equalto', 1) | list | length > 0
 
     - name: 3.1.1 - Deshabilitar servicios inseguros
       ansible.builtin.service:
@@ -27,14 +37,35 @@
         enabled: no
       loop:
         - nfs
+        - nfs-server
         - rpcbind
 
-    - name: 5.2.1 - Configurar permisos en /etc/ssh/sshd_config
+    - name: 5.2.1 - Configurar permisos en SSH
       ansible.builtin.file:
         path: /etc/ssh/sshd_config
         owner: root
         group: root
         mode: '0600'
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: 2.1.1 - Deshabilitar servicios de red innecesarios
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - avahi-daemon
+        - cups
+        - isc-dhcp-server
+      ignore_errors: true
+
+    - name: 1.5.1 - Configurar permisos en /boot/grub/grub.cfg
+      ansible.builtin.file:
+        path: /boot/grub/grub.cfg
+        owner: root
+        group: root
+        mode: '0600'
+      when: ansible_facts.pkg_mgr == 'apt'
 
     - name: Generar reporte de hardening
       ansible.builtin.copy:
@@ -44,7 +75,12 @@
           Fecha: {{ ansible_date_time.iso8601 }}
           
           Resultados:
-          - Filesystems no seguros deshabilitados: {{ fs_modules.results | map(attribute='stdout') | list | join(', ') }}
-          - Servicios inseguros detenidos: nfs, rpcbind
-          - Permisos SSH configurados correctamente
+          - Filesystems no seguros verificados: 
+            {% for result in fs_check.results %}
+            {{ result.item }}: {{ "Bloqueado" if result.rc == 1 else "OK" }}
+            {% endfor %}
+          - Servicios inseguros detenidos: nfs, nfs-server, rpcbind
+          - Permisos SSH configurados: {{ 'Sí' if ansible_facts.pkg_mgr == 'apt' else 'No aplica' }}
+          - Servicios de red innecesarios deshabilitados: avahi-daemon, cups, isc-dhcp-server
+          - Permisos de GRUB configurados: {{ 'Sí' if ansible_facts.pkg_mgr == 'apt' else 'No aplica' }}
         dest: ./hardening-report.txt
