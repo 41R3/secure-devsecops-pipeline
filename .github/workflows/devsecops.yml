@@ -59,7 +59,9 @@ jobs:
           echo "Hardening: hardening-report-artifact"
 
       - name: Preparar directorio de reportes ZAP
-        run: mkdir -p zap
+        run: |
+          mkdir -p ${{ github.workspace }}/zap
+          chmod 777 ${{ github.workspace }}/zap  # Dar permisos completos
 
       - name: Escanear con OWASP ZAP (Solución Definitiva)
         run: |
@@ -80,17 +82,24 @@ jobs:
             -r /zap/wrk/zap/zap-report.html \
             -w /zap/wrk/zap/zap-report.md || true
 
-      - name: Verificar reportes generados
+      - name: Verificar y completar reportes
         run: |
           echo "=== Contenido del directorio zap/ ==="
           ls -lh ${{ github.workspace }}/zap
+          
+          # Si los reportes están vacíos, generar contenido mínimo
+          if [ ! -s "${{ github.workspace }}/zap/zap-report.html" ]; then
+            echo "<html><body><h1>Error: Reporte vacío</h1><p>El escaneo no generó contenido. Verifique los logs.</p></body></html>" > ${{ github.workspace }}/zap/zap-report.html
+          fi
+          
+          if [ ! -s "${{ github.workspace }}/zap/zap-report.md" ]; then
+            echo "# Error: Reporte vacío" > ${{ github.workspace }}/zap/zap-report.md
+            echo "El escaneo no generó contenido. Verifique los logs de ejecución." >> ${{ github.workspace }}/zap/zap-report.md
+          fi
+          
           echo "=== Tamaño de reportes ==="
-          [ -f "${{ github.workspace }}/zap/zap-report.html" ] && \
-            du -h "${{ github.workspace }}/zap/zap-report.html" || \
-            echo "No existe reporte HTML"
-          [ -f "${{ github.workspace }}/zap/zap-report.md" ] && \
-            du -h "${{ github.workspace }}/zap/zap-report.md" || \
-            echo "No existe reporte MD"
+          du -h ${{ github.workspace }}/zap/zap-report.html
+          du -h ${{ github.workspace }}/zap/zap-report.md
 
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
