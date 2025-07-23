@@ -1,9 +1,10 @@
 from flask import Flask, jsonify
 import os
+import socket
 
 app = Flask(__name__)
 
-# Configuración de seguridad
+# Configuración de seguridad mejorada
 app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
@@ -22,7 +23,8 @@ def add_security_headers(response):
         'Cross-Origin-Embedder-Policy': 'require-corp',
         'Cross-Origin-Opener-Policy': 'same-origin',
         'Cross-Origin-Resource-Policy': 'same-origin',
-        'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload'
+        'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
     }
     for header, value in security_headers.items():
         response.headers[header] = value
@@ -48,12 +50,18 @@ def home():
 
 @app.route('/health')
 def health_check():
-    return jsonify({"status": "healthy"}), 200
+    return jsonify({
+        "status": "healthy",
+        "hostname": socket.gethostname()
+    }), 200
 
 if __name__ == "__main__":
+    # Configuración de puerto desde variable de entorno
+    port = int(os.environ.get("PORT", 5000))
     app.run(
         host='0.0.0.0',
-        port=5000,
+        port=port,
         debug=False,
-        server_header=False
+        server_header=False,
+        threaded=True  # Habilitar modo multi-hilo
     )

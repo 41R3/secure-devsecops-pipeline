@@ -23,15 +23,24 @@ jobs:
       - name: Iniciar app Flask
         run: |
           cd app
-          nohup python app.py > /dev/null 2>&1 &
-          sleep 10
+          # Detener cualquier instancia previa
+          pkill -f "python app.py" || true
+          # Iniciar nueva instancia con logging
+          nohup python app.py > app.log 2>&1 &
+          echo "Esperando 15 segundos para que la app inicie..."
+          sleep 15
+          # Verificar que la app está respondiendo
+          curl -s http://localhost:5000/health || (cat app.log && exit 1)
+
+      - name: Limpiar contenedores previos
+        run: |
+          docker ps -aq | xargs docker rm -f || true
 
       - name: Escanear con OWASP ZAP
         uses: zaproxy/action-full-scan@v0.11.0
         with:
           target: 'http://localhost:5000'
-          cmd_options: '-a'
-          artifact_name: 'zap-scan-results'
+          cmd_options: '-a -t 120'  # Aumentar timeout a 120 minutos
           allow_issue_writing: false
 
       - name: Guardar reporte ZAP
