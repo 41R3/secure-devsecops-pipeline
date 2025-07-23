@@ -54,8 +54,7 @@ jobs:
           echo "Hardening: hardening-report-artifact"
 
       - name: Preparar directorio de reportes ZAP
-        run: |
-          mkdir -p zap
+        run: mkdir -p zap
 
       - name: Escanear con OWASP ZAP
         run: |
@@ -78,14 +77,18 @@ jobs:
           echo "=== Archivos generados en zap/ ==="
           ls -lh ${{ github.workspace }}/zap/
 
-       - name: Subir reportes ZAP
-         uses: actions/upload-artifact@v4
-         if: always()
-         with:
-           name: zap-security-reports
-           path: ${{ github.workspace }}/zap/
-           retention-days: 7
+      - name: Verificar reportes generados
+        run: |
+          [ -f ${{ github.workspace }}/zap/zap-report.html ] || echo "Advertencia: No se generó reporte HTML"
+          [ -f ${{ github.workspace }}/zap/zap-report.md ] || echo "Advertencia: No se generó reporte MD"
 
+      - name: Subir reportes ZAP
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-security-reports
+          path: ${{ github.workspace }}/zap/
+          retention-days: 7
 
   server-hardening:
     runs-on: ubuntu-latest
@@ -108,9 +111,9 @@ jobs:
 
       - name: Subir reporte de hardening
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: hardening-report-artifact
           path: ansible/hardening-report.txt
           retention-days: 7
-        if: always()
 
