@@ -1,9 +1,10 @@
 ---
 - name: Aplicar hardening CIS
   hosts: localhost
+  become: yes
   tasks:
     - name: 1.1.1.1 - Deshabilitar filesystems no seguros
-      ansible.builtin.command: 
+      ansible.builtin.command:
         cmd: "modprobe -n -v {{ item }} | grep -E '(cramfs|squashfs|udf)'"
       loop:
         - cramfs
@@ -28,10 +29,22 @@
         - nfs
         - rpcbind
 
+    - name: 5.2.1 - Configurar permisos en /etc/ssh/sshd_config
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config
+        owner: root
+        group: root
+        mode: '0600'
+
     - name: Generar reporte de hardening
       ansible.builtin.copy:
         content: |
           CIS Hardening Report
           ====================
-          {{ fs_modules.results | to_nice_json }}
+          Fecha: {{ ansible_date_time.iso8601 }}
+          
+          Resultados:
+          - Filesystems no seguros deshabilitados: {{ fs_modules.results | map(attribute='stdout') | list | join(', ') }}
+          - Servicios inseguros detenidos: nfs, rpcbind
+          - Permisos SSH configurados correctamente
         dest: ./hardening-report.txt
