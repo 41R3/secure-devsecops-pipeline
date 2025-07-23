@@ -53,38 +53,33 @@ jobs:
           echo "ZAP: zap-reports-artifact"
           echo "Hardening: hardening-report-artifact"
 
-      - name: Escanear con OWASP ZAP
-        uses: zaproxy/action-full-scan@v0.11.0
-        with:
-          target: 'http://localhost:5000'
-          cmd_options: '-a -T 60 -s'
-          zap_options: >-
-            -config api.disablekey=true
-            -config scanner.attackOnStart=true
-            -config connection.timeoutInSecs=600
-            -config scanner.threadPerHost=2
-          allow_issue_writing: false
-          upload_artifact: true
-          artifact_name: zap-scan
-
-      - name: Verificar logs de ZAP
-        if: always()
+      - name: Escanear con OWASP ZAP (Versión Corregida)
         run: |
-          docker logs $(docker ps -aq --filter ancestor=ghcr.io/zaproxy/zaproxy:stable) > zap.log 2>&1 || true
-          grep -i -E "error|fail|warn" zap.log || echo "No se encontraron errores en logs"
-          [ -s zap.log ] && echo "=== Últimas 50 líneas de logs ===" && tail -n 50 zap.log
+          docker run --rm \
+            -v $(pwd):/zap/wrk/:rw \
+            -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+            -t http://host.docker.internal:5000 \
+            -a -T 60 -s \
+            -z "-config api.disablekey=true \
+                -config scanner.attackOnStart=true \
+                -config connection.timeoutInSecs=600 \
+                -config scanner.threadPerHost=2" \
+            -r zap-report.html \
+            -w zap-report.md
+
 
       - name: Guardar reporte ZAP
         run: |
           mkdir -p zap
-          find . -name '*.html' -exec cp {} zap/ \;
-          find . -name '*.md' -exec cp {} zap/ \;
-          [ -f zap/report_html.html ] && mv zap/report_html.html zap/zap-report.html || echo "Reporte HTML no generado"
-          [ -f zap/report_md.md ] && mv zap/report_md.md zap/zap-report.md || echo "Reporte MD no generado"
+          # Mover reportes generados
+          [ -f zap-report.html ] && mv zap-report.html zap/ || echo "Reporte HTML no generado"
+          [ -f zap-report.md ] && mv zap-report.md zap/ || echo "Reporte MD no generado"
+          # Crear archivos vacíos si no existen
           touch zap/zap-report.html zap/zap-report.md
-          echo "=== Resumen de reportes ==="
+          echo "=== Archivos en zap/ ==="
           ls -lh zap/
-        if: always()
+      
 
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
