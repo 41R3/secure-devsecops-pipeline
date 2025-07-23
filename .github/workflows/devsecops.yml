@@ -42,6 +42,11 @@ jobs:
                --connect-timeout 5 \
                -s http://localhost:5000/health || (cat app.log && exit 1)
 
+      - name: Verificar acceso a la app desde contenedor
+        run: |
+          docker run --rm curlimages/curl \
+            curl -v http://host.docker.internal:5000/health || echo "Aviso: no se pudo acceder desde el contenedor"
+
       - name: Verificar estado de la app
         run: |
           netstat -tulnp | grep ':5000' || (echo "App no está en puerto 5000" && exit 1)
@@ -50,37 +55,42 @@ jobs:
       - name: Verificar nombres de artefactos
         run: |
           echo "Nombres de artefactos a subir:"
-          echo "ZAP: zap-reports-artifact"
+          echo "ZAP: zap-security-reports"
           echo "Hardening: hardening-report-artifact"
 
       - name: Preparar directorio de reportes ZAP
         run: mkdir -p zap
 
-      - name: Escanear con OWASP ZAP
+      - name: Escanear con OWASP ZAP (Solución Definitiva)
         run: |
-          mkdir -p ${{ github.workspace }}/zap
+          # 1. Ejecutar escaneo con configuración robusta
           docker run --rm \
-            -v ${{ github.workspace }}/zap:/zap/wrk/:rw \
-            -e ZAP_FAIL_ON_WARN=false \
+            -v ${{ github.workspace }}:/zap/wrk/:rw \
+            -e ZAP_JVM_OPTIONS="-Xmx2g" \
             -t ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
             -t http://host.docker.internal:5000 \
-            -a -T 60 -s \
+            -a -T 90 -s \
             -z "-config api.disablekey=true \
-               -config scanner.attackOnStart=true \
-               -config connection.timeoutInSecs=600 \
-               -config scanner.threadPerHost=2 \
-               -config domxss.scan=false" \
-            -r zap-report.html \
-            -w zap-report.md || true
-
-          echo "=== Archivos generados en zap/ ==="
-          ls -lh ${{ github.workspace }}/zap/
+                -config scanner.attackOnStart=true \
+                -config connection.timeoutInSecs=900 \
+                -config scanner.threadPerHost=2 \
+                -config domxss.scan=false \
+                -config spider.maxDuration=30" \
+            -r /zap/wrk/zap/zap-report.html \
+            -w /zap/wrk/zap/zap-report.md || true
 
       - name: Verificar reportes generados
         run: |
-          [ -f ${{ github.workspace }}/zap/zap-report.html ] || echo "Advertencia: No se generó reporte HTML"
-          [ -f ${{ github.workspace }}/zap/zap-report.md ] || echo "Advertencia: No se generó reporte MD"
+          echo "=== Contenido del directorio zap/ ==="
+          ls -lh ${{ github.workspace }}/zap
+          echo "=== Tamaño de reportes ==="
+          [ -f "${{ github.workspace }}/zap/zap-report.html" ] && \
+            du -h "${{ github.workspace }}/zap/zap-report.html" || \
+            echo "No existe reporte HTML"
+          [ -f "${{ github.workspace }}/zap/zap-report.md" ] && \
+            du -h "${{ github.workspace }}/zap/zap-report.md" || \
+            echo "No existe reporte MD"
 
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
@@ -116,4 +126,5 @@ jobs:
           name: hardening-report-artifact
           path: ansible/hardening-report.txt
           retention-days: 7
+
 
