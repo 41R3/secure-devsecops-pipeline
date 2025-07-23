@@ -64,7 +64,8 @@ jobs:
             -config connection.timeoutInSecs=600
             -config scanner.threadPerHost=2
           allow_issue_writing: false
-          upload_artifact: false
+          upload_artifact: true
+          artifact_name: zap-scan
 
       - name: Verificar logs de ZAP
         if: always()
