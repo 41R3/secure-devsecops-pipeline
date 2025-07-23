@@ -61,63 +61,44 @@ jobs:
       - name: Preparar directorio de reportes ZAP
         run: mkdir -p zap
 
-      - name: Escanear con OWASP ZAP (Solución Probada)
+      - name: Escanear con OWASP ZAP (Solución Definitiva)
         run: |
-          # 1. Crear directorio para reportes
-          mkdir -p ${{ github.workspace }}/zap
-
-          # 2. Ejecutar escaneo con configuración optimizada
+          # 1. Ejecutar escaneo con configuración robusta
           docker run --rm \
-            -v ${{ github.workspace }}/zap:/zap/wrk/:rw \
+            -v ${{ github.workspace }}:/zap/wrk/:rw \
             -e ZAP_JVM_OPTIONS="-Xmx2g" \
             -t ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://localhost:5000 \  # ¡Cambio crucial aquí!
-            -a -T 30 -s \
+            -t http://host.docker.internal:5000 \
+            -a -T 90 -s \
             -z "-config api.disablekey=true \
                 -config scanner.attackOnStart=true \
-                -config connection.timeoutInSecs=300 \
+                -config connection.timeoutInSecs=900 \
                 -config scanner.threadPerHost=2 \
                 -config domxss.scan=false \
-                -config spider.maxDuration=10" \
-            -r report.html \
-            -w report.md || true
+                -config spider.maxDuration=30" \
+            -r /zap/wrk/zap/zap-report.html \
+            -w /zap/wrk/zap/zap-report.md || true
 
-          # 3. Renombrar reportes
-          mv ${{ github.workspace }}/zap/report.html ${{ github.workspace }}/zap/zap-report.html 2>/dev/null || true
-          mv ${{ github.workspace }}/zap/report.md ${{ github.workspace }}/zap/zap-report.md 2>/dev/null || true
-
-      - name: Verificar reportes
+      - name: Verificar reportes generados
         run: |
-          echo "=== Contenido de zap/ ==="
+          echo "=== Contenido del directorio zap/ ==="
           ls -lh ${{ github.workspace }}/zap
-
-          # Si los reportes están vacíos, generar contenido mínimo
-          if [ ! -s "${{ github.workspace }}/zap/zap-report.html" ]; then
-            echo "<html><body><h1>Error: Reporte vacío</h1><p>El escaneo no generó contenido. Verifique los logs.</p></body></html>" > ${{ github.workspace }}/zap/zap-report.html
-          fi
-
-          if [ ! -s "${{ github.workspace }}/zap/zap-report.md" ]; then
-            echo "# Error: Reporte vacío" > ${{ github.workspace }}/zap/zap-report.md
-            echo "El escaneo no generó contenido. Verifique los logs de ejecución." >> ${{ github.workspace }}/zap/zap-report.md
-          fi
+          echo "=== Tamaño de reportes ==="
+          [ -f "${{ github.workspace }}/zap/zap-report.html" ] && \
+            du -h "${{ github.workspace }}/zap/zap-report.html" || \
+            echo "No existe reporte HTML"
+          [ -f "${{ github.workspace }}/zap/zap-report.md" ] && \
+            du -h "${{ github.workspace }}/zap/zap-report.md" || \
+            echo "No existe reporte MD"
 
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: zap-security-reports
-          path: ${{ github.workspace }}/zap
+          path: ${{ github.workspace }}/zap/
           retention-days: 7
-
-      - name: Capturar logs de ZAP
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/zap:/zap/wrk/:rw \
-            -t ghcr.io/zaproxy/zaproxy:stable \
-            cat /zap/wrk/zap.log > ${{ github.workspace }}/zap/zap-debug.log || echo "Logs no disponibles"
-          echo "=== Últimas 50 líneas de debug ==="
-          tail -n 50 ${{ github.workspace }}/zap/zap-debug.log
 
   server-hardening:
     runs-on: ubuntu-latest
