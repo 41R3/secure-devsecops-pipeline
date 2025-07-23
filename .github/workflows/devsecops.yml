@@ -20,58 +20,77 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Limpiar contenedores previos
+        run: |
+          docker ps -aq | xargs docker rm -f || true
+          docker system prune -f
+
       - name: Iniciar app Flask
         run: |
           cd app
-          # Detener cualquier instancia previa
           pkill -f gunicorn || true
-          # Instalar dependencias
-          pip install -r requirements.txt
-          # Iniciar con Gunicorn
-          gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 4 --access-logfile - wsgi:app > app.log 2>&1 &
-          # Esperar y verificar
-          sleep 10  # Aumentado a 10 segundos
-          curl --retry 5 --retry-delay 3 --max-time 10 -s http://localhost:5000/health || (cat app.log && exit 1)
+          gunicorn --bind 0.0.0.0:5000 \
+                  --workers 2 \
+                  --threads 4 \
+                  --access-logfile - \
+                  --log-level warning \
+                  wsgi:app > app.log 2>&1 &
+          sleep 15
+          curl --retry 5 \
+               --retry-delay 3 \
+               --max-time 10 \
+               --connect-timeout 5 \
+               -s http://localhost:5000/health || (cat app.log && exit 1)
 
       - name: Verificar estado de la app
         run: |
-          netstat -tuln | grep 5000 || (echo "La app no está escuchando en el puerto 5000" && exit 1)
-          curl -s http://localhost:5000/health
+          netstat -tulnp | grep ':5000' || (echo "App no está en puerto 5000" && exit 1)
+          curl -s http://localhost:5000/health | grep healthy || exit 1
+
+      - name: Verificar nombres de artefactos
+        run: |
+          echo "Nombres de artefactos a subir:"
+          echo "ZAP: zap-reports-artifact"
+          echo "Hardening: hardening-report-artifact"
 
       - name: Escanear con OWASP ZAP
         uses: zaproxy/action-full-scan@v0.11.0
         with:
           target: 'http://localhost:5000'
-          cmd_options: '-a -T 60 -s'  # Aumentar timeout a 60 minutos
-          # Opciones clave para resolver el error:
-          zap_options: '-config api.disablekey=true -config scanner.attackOnStart=true -config connection.timeoutInSecs=600 -config scanner.threadPerHost=2'
+          cmd_options: '-a -T 60 -s'
+          zap_options: >-
+            -config api.disablekey=true
+            -config scanner.attackOnStart=true
+            -config connection.timeoutInSecs=600
+            -config scanner.threadPerHost=2
           allow_issue_writing: false
+          upload_artifact: false
 
       - name: Verificar logs de ZAP
         if: always()
         run: |
           docker logs $(docker ps -aq --filter ancestor=ghcr.io/zaproxy/zaproxy:stable) > zap.log 2>&1 || true
-          cat zap.log
-          grep -i "error" zap.log || echo "No se encontraron errores en logs de ZAP"
+          grep -i -E "error|fail|warn" zap.log || echo "No se encontraron errores en logs"
+          [ -s zap.log ] && echo "=== Últimas 50 líneas de logs ===" && tail -n 50 zap.log
 
       - name: Guardar reporte ZAP
         run: |
           mkdir -p zap
-          # Copiar todos los reportes generados
           find . -name '*.html' -exec cp {} zap/ \;
           find . -name '*.md' -exec cp {} zap/ \;
-          # Renombrar archivos principales
-          [ -f zap/report_html.html ] && mv zap/report_html.html zap/zap-report.html || echo "Reporte HTML no encontrado"
-          [ -f zap/report_md.md ] && mv zap/report_md.md zap/zap-report.md || echo "Reporte MD no encontrado"
-          # Crear archivo vacío si no hay reportes
+          [ -f zap/report_html.html ] && mv zap/report_html.html zap/zap-report.html || echo "Reporte HTML no generado"
+          [ -f zap/report_md.md ] && mv zap/report_md.md zap/zap-report.md || echo "Reporte MD no generado"
           touch zap/zap-report.html zap/zap-report.md
+          echo "=== Resumen de reportes ==="
+          ls -lh zap/
         if: always()
 
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
         with:
-          name: zap-reports
+          name: zap-reports-artifact
           path: zap/
+          retention-days: 7
         if: always()
 
   server-hardening:
@@ -88,11 +107,15 @@ jobs:
       - name: Ejecutar hardening CIS
         run: |
           cd ansible
-          ansible-playbook playbook.yml
-          cat hardening-report.txt
+          ansible-playbook playbook.yml -v
+          echo "=== Reporte de Hardening ==="
+          cat hardening-report.txt || echo "No se generó reporte"
+          [ -f hardening-report.txt ] || exit 1
 
       - name: Subir reporte de hardening
         uses: actions/upload-artifact@v4
         with:
-          name: hardening-report
+          name: hardening-report-artifact
           path: ansible/hardening-report.txt
+          retention-days: 7
+        if: always()
