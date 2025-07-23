@@ -30,35 +30,41 @@ jobs:
           # Iniciar con Gunicorn
           gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 4 --access-logfile - wsgi:app > app.log 2>&1 &
           # Esperar y verificar
-          sleep 5
-          curl -s http://localhost:5000/health || (cat app.log && exit 1)
+          sleep 10  # Aumentado a 10 segundos
+          curl --retry 5 --retry-delay 3 --max-time 10 -s http://localhost:5000/health || (cat app.log && exit 1)
 
-      - name: Limpiar contenedores previos
+      - name: Verificar estado de la app
         run: |
-          docker ps -aq | xargs docker rm -f || true
-          docker system prune -f
+          netstat -tuln | grep 5000 || (echo "La app no está escuchando en el puerto 5000" && exit 1)
+          curl -s http://localhost:5000/health
 
       - name: Escanear con OWASP ZAP
         uses: zaproxy/action-full-scan@v0.11.0
         with:
           target: 'http://localhost:5000'
-          cmd_options: '-a -t 60 -s'  # Aumentar timeout a 60 minutos
-          zap_options: '-config api.disablekey=true -config scanner.attackOnStart=true -config connection.timeoutInSecs=300'
+          cmd_options: '-a -T 60 -s'  # Aumentar timeout a 60 minutos
+          # Opciones clave para resolver el error:
+          zap_options: '-config api.disablekey=true -config scanner.attackOnStart=true -config connection.timeoutInSecs=600 -config scanner.threadPerHost=2'
           allow_issue_writing: false
 
       - name: Verificar logs de ZAP
         if: always()
         run: |
-          docker logs $(docker ps -aq --filter ancestor=ghcr.io/zaproxy/zaproxy:stable) || true
-          cat zap/zap-report.md || true
+          docker logs $(docker ps -aq --filter ancestor=ghcr.io/zaproxy/zaproxy:stable) > zap.log 2>&1 || true
+          cat zap.log
+          grep -i "error" zap.log || echo "No se encontraron errores en logs de ZAP"
 
       - name: Guardar reporte ZAP
         run: |
           mkdir -p zap
+          # Copiar todos los reportes generados
           find . -name '*.html' -exec cp {} zap/ \;
           find . -name '*.md' -exec cp {} zap/ \;
-          mv zap/report_html.html zap/zap-report.html || true
-          mv zap/report_md.md zap/zap-report.md || true
+          # Renombrar archivos principales
+          [ -f zap/report_html.html ] && mv zap/report_html.html zap/zap-report.html || echo "Reporte HTML no encontrado"
+          [ -f zap/report_md.md ] && mv zap/report_md.md zap/zap-report.md || echo "Reporte MD no encontrado"
+          # Crear archivo vacío si no hay reportes
+          touch zap/zap-report.html zap/zap-report.md
         if: always()
 
       - name: Subir reportes ZAP

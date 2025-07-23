@@ -1,6 +1,11 @@
 from flask import Flask, jsonify
 import os
 import socket
+import logging
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -29,45 +34,36 @@ def add_security_headers(response):
     for header, value in security_headers.items():
         response.headers[header] = value
     
-    # Ocultar el header Server manualmente
-    if 'Server' in response.headers:
-        del response.headers['Server']
+    # Ocultar headers sensibles
+    for header in ['Server', 'X-Powered-By']:
+        if header in response.headers:
+            del response.headers[header]
     
     return response
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({
-        "error": "Not found",
-        "message": "The requested resource was not found"
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({
-        "error": "Internal server error",
-        "message": "An unexpected error occurred"
-    }), 500
-
 @app.route('/')
 def home():
+    logger.info("Acceso a la ruta principal")
     return "DevSecOps Project: ¡Escaneado con OWASP ZAP!"
 
 @app.route('/health')
 def health_check():
+    logger.info("Health check solicitado")
     return jsonify({
         "status": "healthy",
-        "hostname": socket.gethostname()
+        "hostname": socket.gethostname(),
+        "environment": os.environ.get("ENV", "development")
     }), 200
 
 if __name__ == "__main__":
     # Configuración optimizada para escaneos
+    port = int(os.environ.get("PORT", 5000))
+    logger.info(f"Iniciando aplicación en puerto {port}")
+    
     app.run(
         host='0.0.0.0',
-        port=5000,
+        port=port,
         debug=False,
         threaded=True,
-        # Ajustes para evitar timeouts
-        use_reloader=False,
-        use_debugger=False
+        use_reloader=False  # Importante para evitar dobles instancias
     )
