@@ -28,6 +28,11 @@ def add_security_headers(response):
     }
     for header, value in security_headers.items():
         response.headers[header] = value
+    
+    # Ocultar el header Server manualmente
+    if 'Server' in response.headers:
+        del response.headers['Server']
+    
     return response
 
 @app.errorhandler(404)
@@ -62,6 +67,5 @@ if __name__ == "__main__":
         host='0.0.0.0',
         port=port,
         debug=False,
-        server_header=False,
         threaded=True  # Habilitar modo multi-hilo
     )
