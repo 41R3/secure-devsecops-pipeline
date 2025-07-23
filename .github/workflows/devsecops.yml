@@ -72,11 +72,12 @@ jobs:
         run: |
           # 1. Ejecutar escaneo con configuración robusta
           docker run --rm \
+            --network host \
             -v ${{ github.workspace }}:/zap/wrk/:rw \
             -e ZAP_JVM_OPTIONS="-Xmx2g" \
             -t ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://host.docker.internal:5000 \
+            -t http://127.0.0.1:5000 \
             -a -T 90 -s \
             -z "-config api.disablekey=true \
                 -config scanner.attackOnStart=true \
