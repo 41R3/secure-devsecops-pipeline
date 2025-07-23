@@ -44,7 +44,7 @@ jobs:
         if: always()
 
       - name: Subir reportes ZAP
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: zap-reports
           path: zap/
@@ -68,7 +68,7 @@ jobs:
           cat hardening-report.txt
 
       - name: Subir reporte de hardening
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: hardening-report
           path: ansible/hardening-report.txt
