@@ -56,10 +56,11 @@ jobs:
       - name: Escanear con OWASP ZAP (Versión Corregida)
         run: |
           docker run --rm \
+            --network host \
             -v $(pwd):/zap/wrk/:rw \
             -t ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://host.docker.internal:5000 \
+            -t http://localhost:5000 \
             -a -T 60 -s \
             -z "-config api.disablekey=true \
                 -config scanner.attackOnStart=true \
