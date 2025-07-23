@@ -57,7 +57,12 @@ jobs:
           echo "Nombres de artefactos a subir:"
           echo "ZAP: zap-security-reports"
           echo "Hardening: hardening-report-artifact"
-
+      - name: Levantar Flask app
+        run: |
+          cd app
+          pip install -r requirements.txt
+          nohup python app.py &   # arranca sin bloquear
+          sleep 10                 # espera a que esté listo
       - name: Preparar directorio de reportes ZAP
         run: |
           mkdir -p ${{ github.workspace }}/zap
