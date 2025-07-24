@@ -89,6 +89,6 @@ The `.github/workflows/devsecops.yml` file defines the CI/CD pipeline.
     * **Create Meaningful Report:** Generates a `hardening-report.txt` summarizing the Ansible playbook execution, indicating success or listing detected issues.
     * **Upload Hardening Report:** Archives and uploads the hardening report as a GitHub Action artifact.
 
-## License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details. 
+## ☕ Apóyame
+Si este proyecto te fue útil, considera invitarme un café:  
+👉 [ko-fi.com/4er1_](https://ko-fi.com/4er1_)
