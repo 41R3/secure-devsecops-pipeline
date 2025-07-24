@@ -46,11 +46,13 @@ jobs:
             fi
           done
 
-      - name: Verificar acceso a la app desde contenedor
+      - name: Verificar acceso desde contenedor (usando IP)
         run: |
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "Dirección IP del host: $HOST_IP"
           docker run --rm curlimages/curl \
-            curl -v http://host.docker.internal:5000/health || echo "Aviso: no se pudo acceder desde el contenedor"
-
+            curl -v http://$HOST_IP:5000/health || (echo "ERROR: App no accesible desde contenedor" && exit 1)
+    
       - name: Verificar estado de la app
         run: |
          netstat -tulnp | grep ':5000' || (echo "App no está en puerto 5000" && exit 1)
@@ -69,6 +71,10 @@ jobs:
 
       - name: Escanear con OWASP ZAP (Solución Definitiva)
         run: |
+          # Obtener IP del host
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "Escaneando aplicación en: http://$HOST_IP:5000"
+
           # 1. Ejecutar escaneo con configuración robusta
           docker run --rm \
             --network="host" \
@@ -86,10 +92,7 @@ jobs:
                 -config spider.maxDuration=15" \
             -r /zap/wrk/zap/zap-report.html \
             -w /zap/wrk/zap-report.md 2>&1 | tee zap-scan.log
-          # Forzar generación de reportes si falla
-          [ -f ${{ github.workspace }}/zap/zap-report.html ] || echo "<h1>ERROR: No se generó reporte</h1><p>Consulte los logs</p>" > ${{ github.workspace }}/zap/zap-report.html
-          [ -f ${{ github.workspace }}/zap/zap-report.md ] || echo "# ERROR: No se generó reporte" > ${{ github.workspace }}/zap/zap-report.md
-          
+           
           # Mostrar logs para diagnóstico
           echo "=== LOGS DEL ESCANEO ZAP ==="
           cat zap-scan.log
