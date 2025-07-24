@@ -71,11 +71,6 @@ jobs:
 
       - name: Escanear con OWASP ZAP (Solución Definitiva)
         run: |
-          # 1. Crear archivos de reporte vacíos como respaldo
-          echo "<html><body><h1>Inicio del reporte ZAP</h1><p>El escaneo está en progreso...</p></body></html>" > ${{ github.workspace }}/zap/zap-report.html
-          echo "# Reporte ZAP" > ${{ github.workspace }}/zap/zap-report.md
-          echo "El escaneo está en progreso..." >> ${{ github.workspace }}/zap/zap-report.md
-
           # Obtener IP del host
           HOST_IP=$(hostname -I | awk '{print $1}')
           echo "Escaneando aplicación en: http://$HOST_IP:5000"
@@ -96,26 +91,30 @@ jobs:
                 -config domxss.scan=false \
                 -config spider.maxDuration=15" \
             -r /zap/wrk/zap/zap-report.html \
-            -w /zap/wrk/zap-report.md 2>&1 | tee zap-scan.log || true
+            -w /zap/wrk/zap-report.md 2>&1 | tee zap-scan.log
+           
+          # Mostrar logs para diagnóstico
+          echo "=== LOGS DEL ESCANEO ZAP ==="
+          cat zap-scan.log
+
+      - name: Verificar y completar reportes
+        run: |
+          echo "=== Contenido del directorio zap/ ==="
+          ls -lh ${{ github.workspace }}/zap
           
-          # 4. Forzar contenido mínimo si los reportes están vacíos
+          # Si los reportes están vacíos, generar contenido mínimo
           if [ ! -s "${{ github.workspace }}/zap/zap-report.html" ]; then
-            echo "<html><body><h1>Resultado del Escaneo ZAP</h1><p>No se encontraron vulnerabilidades</p><p>Logs:</p><pre>$(cat zap-scan.log | head -n 100)</pre></body></html>" > ${{ github.workspace }}/zap/zap-report.html
+            echo "<html><body><h1>Error: Reporte vacío</h1><p>El escaneo no generó contenido. Verifique los logs.</p></body></html>" > ${{ github.workspace }}/zap/zap-report.html
           fi
           
           if [ ! -s "${{ github.workspace }}/zap/zap-report.md" ]; then
-            echo "# Resultado del Escaneo ZAP" > ${{ github.workspace }}/zap/zap-report.md
-            echo "No se encontraron vulnerabilidades" >> ${{ github.workspace }}/zap/zap-report.md
-            echo "## Últimas 20 líneas de logs:" >> ${{ github.workspace }}/zap/zap-report.md
-            echo "\`\`\`" >> ${{ github.workspace }}/zap/zap-report.md
-            tail -n 20 zap-scan.log >> ${{ github.workspace }}/zap/zap-report.md
-            echo "\`\`\`" >> ${{ github.workspace }}/zap/zap-report.md
+            echo "# Error: Reporte vacío" > ${{ github.workspace }}/zap/zap-report.md
+            echo "El escaneo no generó contenido. Verifique los logs de ejecución." >> ${{ github.workspace }}/zap/zap-report.md
           fi
           
-          # 5. Mostrar logs para diagnóstico
-          echo "=== Últimas 20 líneas de logs ZAP ==="
-          tail -n 20 zap-scan.log
-
+          echo "=== Tamaño de reportes ==="
+          du -h ${{ github.workspace }}/zap/zap-report.html
+          du -h ${{ github.workspace }}/zap/zap-report.md
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
         if: always()
@@ -140,9 +139,8 @@ jobs:
           cd ansible
           ansible-playbook playbook.yml -v > hardening.log 2>&1 || true
           echo "=== Reporte de Hardening ==="
-          [ -f hardening-report.txt ] && cat hardening-report.txt || echo "No se encontraron problemas de hardening" > hardening-report.txt
-          # Agregar timestamp al reporte
-          echo "Generado el: $(date)" >> hardening-report.txt
+          [ -f hardening-report.txt ] && cat hardening-report.txt || echo "No se generó reporte"
+          [ -f hardening-report.txt ] || echo "Resultados no disponibles" > hardening-report.txt
 
       - name: Subir reporte de hardening
         uses: actions/upload-artifact@v4
