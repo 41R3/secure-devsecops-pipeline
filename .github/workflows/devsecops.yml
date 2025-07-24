@@ -34,7 +34,7 @@ jobs:
                   --threads 4 \
                   --access-logfile - \
                   --log-level warning \
-                  wsgi:app > app.log 2>&1 &
+                  main:app > app.log 2>&1 &  # Cambiado de wsgi:app a main:app
           
           # Espera activa con verificación de salud
           for i in {1..10}; do
