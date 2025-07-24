@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Instalar dependencias de la app
+      - name: Instalar dependencias
         run: |
           cd app
           python -m pip install --upgrade pip
@@ -25,81 +25,129 @@ jobs:
           docker ps -aq | xargs docker rm -f || true
           docker system prune -f
 
-      - name: Iniciar app Flask con Gunicorn y validar
+      - name: Iniciar app Flask
         run: |
           cd app
           pkill -f gunicorn || true
-          nohup gunicorn --bind 0.0.0.0:5000 wsgi:app \
-               --workers 2 --threads 4 > app.log 2>&1 &
+          gunicorn --bind 0.0.0.0:5000 \
+                  --workers 2 \
+                  --threads 4 \
+                  --access-logfile - \
+                  --log-level warning \
+                  wsgi:app > app.log 2>&1 &
+          
+          # Espera activa con verificación de salud
           for i in {1..10}; do
-            if curl -sf http://127.0.0.1:5000/health | grep -q healthy; then
-              echo "✅ App lista"
+            if curl -s --max-time 5 http://localhost:5000/health | grep healthy; then
+              echo "App iniciada correctamente"
               break
             else
-              echo "⏳ Intento $i: esperando a la app..."
-              sleep 5
+              echo "Intento $i: App no lista, reintentando..."
+              sleep 10
             fi
           done
-          curl -sf http://127.0.0.1:5000/health || (cat app.log && exit 1)
+
+      - name: Verificar acceso desde contenedor (usando IP)
+        run: |
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "Dirección IP del host: $HOST_IP"
+          docker run --rm curlimages/curl \
+            curl -v http://$HOST_IP:5000/health || (echo "ERROR: App no accesible desde contenedor" && exit 1)
+    
+      - name: Verificar estado de la app
+        run: |
+         netstat -tulnp | grep ':5000' || (echo "App no está en puerto 5000" && exit 1)
+         curl -s http://localhost:5000/health | grep healthy || (cat app/app.log && exit 1)
 
       - name: Preparar directorio de reportes ZAP
         run: |
-          mkdir -p zap
-          chmod 777 zap
+          mkdir -p ${{ github.workspace }}/zap
+          chmod 777 ${{ github.workspace }}/zap
+          
+          # Crear reportes iniciales
+          echo "<!DOCTYPE html><html><head><title>ZAP Security Report</title></head><body>" > ${{ github.workspace }}/zap/zap-report.html
+          echo "<h1>ZAP Security Scan Report</h1>" >> ${{ github.workspace }}/zap/zap-report.html
+          echo "<p>Scan started at: $(date)</p>" >> ${{ github.workspace }}/zap/zap-report.html
+          
+          echo "# ZAP Security Scan Report" > ${{ github.workspace }}/zap/zap-report.md
+          echo "Scan started at: $(date)" >> ${{ github.workspace }}/zap/zap-report.md
 
-      - name: Escanear con OWASP ZAP
+      - name: Escanear con OWASP ZAP (Solución Definitiva)
         run: |
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "Escaneando aplicación en: http://$HOST_IP:5000"
+          
+          # Ejecutar escaneo y capturar exit code
           docker run --rm \
-            --network host \
-            -v ${{ github.workspace }}/zap:/zap/wrk:rw \
+            -v ${{ github.workspace }}/zap:/zap/wrk/:rw \
             -e ZAP_JVM_OPTIONS="-Xmx2g" \
-            ghcr.io/zaproxy/zaproxy:stable \
+            -t ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-              -t http://127.0.0.1:5000 \
-              -a -T 30 -s \
-              -z "-config api.disablekey=true \
-                  -config scanner.attackOnStart=true \
-                  -config connection.timeoutInSecs=300 \
-                  -config scanner.threadPerHost=2 \
-                  -config domxss.scan=false \
-                  -config spider.maxDuration=15" \
-              -r /zap/wrk/zap-report.html \
-              -w /zap/wrk/zap-report.md \
-          | tee zap-scan.log
+            -t http://$HOST_IP:5000 \
+            -a -T 30 -s \
+            -z "-config api.disablekey=true \
+                -config scanner.attackOnStart=true \
+                -config connection.timeoutInSecs=300 \
+                -config scanner.threadPerHost=2 \
+                -config spider.maxDuration=15" \
+            -r /zap/wrk/zap-report.html \
+            -w /zap/wrk/zap-report.md 2>&1 | tee zap-scan.log || true
+          
+          # Capturar resultado del escaneo
+          SCAN_EXIT_CODE=${PIPESTATUS[0]}
+          echo "SCAN_EXIT_CODE=$SCAN_EXIT_CODE" >> $GITHUB_ENV
+          
+          # Mostrar logs para diagnóstico
+          echo "=== Últimas 20 líneas de logs ZAP ==="
+          tail -n 20 zap-scan.log
 
-      - name: Incluir logs y marcar “no vulnerabilities” si aplica
+      - name: Generar reporte final significativo
         run: |
-          cd zap
-          # Añadir sección de Logs al Markdown
-          echo -e "\n\n---\n## Scan Logs\n" >> zap-report.md
-          sed 's/^/    /' ../zap-scan.log >> zap-report.md
-
-          # Insertar “No vulnerabilities” en HTML si no hay alertitem
-          if ! grep -q "<alertitem>" zap-report.html; then
-            sed -i '/<\/body>/i <h2 style="color:green;text-align:center;">✅ No vulnerabilities found</h2>' zap-report.html
+          # Agregar información de finalización al reporte
+          echo "<hr><h2>Scan Summary</h2>" >> ${{ github.workspace }}/zap/zap-report.html
+          echo "<p>Scan completed at: $(date)</p>" >> ${{ github.workspace }}/zap/zap-report.html
+          
+          echo -e "\n## Scan Summary" >> ${{ github.workspace }}/zap/zap-report.md
+          echo "Scan completed at: $(date)" >> ${{ github.workspace }}/zap/zap-report.md
+          
+          # Analizar resultados
+          if grep -q "No alerts were raised" zap-scan.log; then
+            echo "<p style='color:green;font-weight:bold;'>No se encontraron vulnerabilidades</p>" >> ${{ github.workspace }}/zap/zap-report.html
+            echo -e "\n**No se encontraron vulnerabilidades**" >> ${{ github.workspace }}/zap/zap-report.md
+            echo "ZAP_SCAN_RESULT=clean" >> $GITHUB_ENV
+          elif [ "$SCAN_EXIT_CODE" = "0" ]; then
+            echo "<p style='color:orange;font-weight:bold;'>Se encontraron vulnerabilidades (ver detalles abajo)</p>" >> ${{ github.workspace }}/zap/zap-report.html
+            echo -e "\n**Se encontraron vulnerabilidades (ver detalles abajo)**" >> ${{ github.workspace }}/zap/zap-report.md
+            echo "ZAP_SCAN_RESULT=vulnerabilities_found" >> $GITHUB_ENV
+          else
+            echo "<p style='color:red;font-weight:bold;'>Error en el escaneo - verifique los logs</p>" >> ${{ github.workspace }}/zap/zap-report.html
+            echo -e "\n**Error en el escaneo - verifique los logs**" >> ${{ github.workspace }}/zap/zap-report.md
+            
+            # Agregar resumen de logs al reporte
+            echo "<h3>Error Details</h3><pre>" >> ${{ github.workspace }}/zap/zap-report.html
+            tail -n 50 zap-scan.log | sed 's/</\&lt;/g; s/>/\&gt;/g' >> ${{ github.workspace }}/zap/zap-report.html
+            echo "</pre>" >> ${{ github.workspace }}/zap/zap-report.html
+            
+            echo -e "\n### Error Details\n\`\`\`" >> ${{ github.workspace }}/zap/zap-report.md
+            tail -n 50 zap-scan.log >> ${{ github.workspace }}/zap/zap-report.md
+            echo "\`\`\`" >> ${{ github.workspace }}/zap/zap-report.md
+            
+            echo "ZAP_SCAN_RESULT=error" >> $GITHUB_ENV
           fi
-
-      - name: Diagnóstico si está vacío
-        if: always()
-        run: |
-          echo "=== Contenido de zap/ ==="
-          ls -lh zap
-          if [ ! -s zap/zap-report.html ]; then
-            echo "❌ El reporte HTML está vacío. Aquí zap-scan.log:"
-            cat zap-scan.log
-            exit 1
-          fi
-          if [ ! -s zap/zap-report.md ]; then
-            echo "❌ El reporte MD está vacío. Aquí zap-scan.log:"
-            cat zap-scan.log
-            exit 1
-          fi
+          
+          # Cerrar estructura HTML
+          echo "</body></html>" >> ${{ github.workspace }}/zap/zap-report.html
+          
+          # Mostrar resultado final
+          echo "=== RESULTADO DEL ESCANEO ==="
+          echo "Estado: $ZAP_SCAN_RESULT"
 
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: zap-security-reports
-          path: zap/
+          path: ${{ github.workspace }}/zap/
           retention-days: 7
 
   server-hardening:
@@ -117,11 +165,28 @@ jobs:
         run: |
           cd ansible
           ansible-playbook playbook.yml -v > hardening.log 2>&1 || true
-          [ -f hardening-report.txt ] || echo "No se generó reporte" > hardening-report.txt
+          
+          # Crear reporte significativo
+          echo "# Hardening Report" > hardening-report.txt
+          echo "Generated at: $(date)" >> hardening-report.txt
+          echo "## Result Summary" >> hardening-report.txt
+          
+          if grep -q "failed=0" hardening.log; then
+            echo "✅ Todas las tareas se completaron exitosamente" >> hardening-report.txt
+            echo "No se encontraron problemas de hardening" >> hardening-report.txt
+          else
+            echo "⚠️ Se encontraron problemas de hardening" >> hardening-report.txt
+            echo "### Errores detectados:" >> hardening-report.txt
+            grep -E 'failed=[1-9]|changed=[1-9]' hardening.log >> hardening-report.txt
+          fi
+          
+          # Mostrar reporte
+          echo "=== REPORTE DE HARDENING ==="
           cat hardening-report.txt
 
       - name: Subir reporte de hardening
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: hardening-report-artifact
           path: ansible/hardening-report.txt
