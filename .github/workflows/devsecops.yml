@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Instalar dependencias
+      - name: Instalar dependencias de la app
         run: |
           cd app
           python -m pip install --upgrade pip
@@ -25,102 +25,81 @@ jobs:
           docker ps -aq | xargs docker rm -f || true
           docker system prune -f
 
-      - name: Iniciar app Flask
+      - name: Iniciar app Flask con Gunicorn y validar
         run: |
           cd app
           pkill -f gunicorn || true
-          gunicorn --bind 0.0.0.0:5000 \
-                  --workers 2 \
-                  --threads 4 \
-                  --access-logfile - \
-                  --log-level warning \
-                  wsgi:app > app.log 2>&1 &
-          # Espera más tiempo con más reintentos
+          nohup gunicorn --bind 0.0.0.0:5000 wsgi:app \
+               --workers 2 --threads 4 > app.log 2>&1 &
           for i in {1..10}; do
-            if curl -s --max-time 5 http://localhost:5000/health | grep healthy; then
-              echo "App iniciada correctamente"
+            if curl -sf http://127.0.0.1:5000/health | grep -q healthy; then
+              echo "✅ App lista"
               break
             else
-              echo "Intento $i: App no lista, reintentando..."
-              sleep 10
+              echo "⏳ Intento $i: esperando a la app..."
+              sleep 5
             fi
           done
-
-      - name: Verificar acceso desde contenedor (usando IP)
-        run: |
-          HOST_IP=$(hostname -I | awk '{print $1}')
-          echo "Dirección IP del host: $HOST_IP"
-          docker run --rm curlimages/curl \
-            curl -v http://$HOST_IP:5000/health || (echo "ERROR: App no accesible desde contenedor" && exit 1)
-    
-      - name: Verificar estado de la app
-        run: |
-         netstat -tulnp | grep ':5000' || (echo "App no está en puerto 5000" && exit 1)
-         curl -s http://localhost:5000/health | grep healthy || (cat app/app.log && exit 1)
-
-      - name: Verificar nombres de artefactos
-        run: |
-          echo "Nombres de artefactos a subir:"
-          echo "ZAP: zap-security-reports"
-          echo "Hardening: hardening-report-artifact"
+          curl -sf http://127.0.0.1:5000/health || (cat app.log && exit 1)
 
       - name: Preparar directorio de reportes ZAP
         run: |
-          mkdir -p ${{ github.workspace }}/zap
-          chmod 777 ${{ github.workspace }}/zap  # Dar permisos completos
+          mkdir -p zap
+          chmod 777 zap
 
-      - name: Escanear con OWASP ZAP (Solución Definitiva)
+      - name: Escanear con OWASP ZAP
         run: |
-          # Obtener IP del host
-          HOST_IP=$(hostname -I | awk '{print $1}')
-          echo "Escaneando aplicación en: http://$HOST_IP:5000"
-
-          # 1. Ejecutar escaneo con configuración robusta
           docker run --rm \
-            --network="host" \
-            -v ${{ github.workspace }}:/zap/wrk/:rw \
+            --network host \
+            -v ${{ github.workspace }}/zap:/zap/wrk:rw \
             -e ZAP_JVM_OPTIONS="-Xmx2g" \
-            -t ghcr.io/zaproxy/zaproxy:stable \
+            ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://127.0.0.1:5000 \
-            -a -T 30 -s \
-            -z "-config api.disablekey=true \
-                -config scanner.attackOnStart=true \
-                -config connection.timeoutInSecs=300 \
-                -config scanner.threadPerHost=2 \
-                -config domxss.scan=false \
-                -config spider.maxDuration=15" \
-            -r /zap/wrk/zap/zap-report.html \
-            -w /zap/wrk/zap-report.md 2>&1 | tee zap-scan.log
-           
-          # Mostrar logs para diagnóstico
-          echo "=== LOGS DEL ESCANEO ZAP ==="
-          cat zap-scan.log
+              -t http://127.0.0.1:5000 \
+              -a -T 30 -s \
+              -z "-config api.disablekey=true \
+                  -config scanner.attackOnStart=true \
+                  -config connection.timeoutInSecs=300 \
+                  -config scanner.threadPerHost=2 \
+                  -config domxss.scan=false \
+                  -config spider.maxDuration=15" \
+              -r /zap/wrk/zap-report.html \
+              -w /zap/wrk/zap-report.md \
+          | tee zap-scan.log
 
-      - name: Verificar y completar reportes
+      - name: Incluir logs y marcar “no vulnerabilities” si aplica
         run: |
-          echo "=== Contenido del directorio zap/ ==="
-          ls -lh ${{ github.workspace }}/zap
-          
-          # Si los reportes están vacíos, generar contenido mínimo
-          if [ ! -s "${{ github.workspace }}/zap/zap-report.html" ]; then
-            echo "<html><body><h1>Error: Reporte vacío</h1><p>El escaneo no generó contenido. Verifique los logs.</p></body></html>" > ${{ github.workspace }}/zap/zap-report.html
+          cd zap
+          # Añadir sección de Logs al Markdown
+          echo -e "\n\n---\n## Scan Logs\n" >> zap-report.md
+          sed 's/^/    /' ../zap-scan.log >> zap-report.md
+
+          # Insertar “No vulnerabilities” en HTML si no hay alertitem
+          if ! grep -q "<alertitem>" zap-report.html; then
+            sed -i '/<\/body>/i <h2 style="color:green;text-align:center;">✅ No vulnerabilities found</h2>' zap-report.html
           fi
-          
-          if [ ! -s "${{ github.workspace }}/zap/zap-report.md" ]; then
-            echo "# Error: Reporte vacío" > ${{ github.workspace }}/zap/zap-report.md
-            echo "El escaneo no generó contenido. Verifique los logs de ejecución." >> ${{ github.workspace }}/zap/zap-report.md
+
+      - name: Diagnóstico si está vacío
+        if: always()
+        run: |
+          echo "=== Contenido de zap/ ==="
+          ls -lh zap
+          if [ ! -s zap/zap-report.html ]; then
+            echo "❌ El reporte HTML está vacío. Aquí zap-scan.log:"
+            cat zap-scan.log
+            exit 1
           fi
-          
-          echo "=== Tamaño de reportes ==="
-          du -h ${{ github.workspace }}/zap/zap-report.html
-          du -h ${{ github.workspace }}/zap/zap-report.md
+          if [ ! -s zap/zap-report.md ]; then
+            echo "❌ El reporte MD está vacío. Aquí zap-scan.log:"
+            cat zap-scan.log
+            exit 1
+          fi
+
       - name: Subir reportes ZAP
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: zap-security-reports
-          path: ${{ github.workspace }}/zap/
+          path: zap/
           retention-days: 7
 
   server-hardening:
@@ -138,13 +117,11 @@ jobs:
         run: |
           cd ansible
           ansible-playbook playbook.yml -v > hardening.log 2>&1 || true
-          echo "=== Reporte de Hardening ==="
-          [ -f hardening-report.txt ] && cat hardening-report.txt || echo "No se generó reporte"
-          [ -f hardening-report.txt ] || echo "Resultados no disponibles" > hardening-report.txt
+          [ -f hardening-report.txt ] || echo "No se generó reporte" > hardening-report.txt
+          cat hardening-report.txt
 
       - name: Subir reporte de hardening
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: hardening-report-artifact
           path: ansible/hardening-report.txt
